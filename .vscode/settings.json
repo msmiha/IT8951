@@ -1,0 +1,14 @@
+{
+    "makefile.launchConfigurations": [
+        {
+            "cwd": "/home/pi/IT8951",
+            "binaryPath": "/home/pi/IT8951/epd",
+            "binaryArgs": []
+        }
+    ],
+    "files.associations": {
+        "epd_it8951.h": "c",
+        "gui_bmpfile.h": "c",
+        "display_app.h": "c"
+    }
+}
