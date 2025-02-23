@@ -24,7 +24,15 @@
 #define MQTT_TOPIC  "fontana/"FUNCTION"/"DEV_ID"/epaper/image"
 #define MQTT_QOS 0
 
+// Default image timeout in seconds.
+#define DEFAULT_IMAGE_TIMEOUT 10
+
+// Make sure to declare external references to the timestamp and current image type.
+extern time_t last_image_display_time;
+extern DisplayImageType current_image_type;
+
 UDOUBLE Init_Target_Memory_Addr = 0;  // Global definition
+IT8951_Dev_Info global_dev_info;  // Global variable to hold device info.
 
 // Global flag to control the main loop
 volatile int running = 1;
@@ -55,20 +63,20 @@ int main(int argc, char *argv[]) {
     }
 
     // Initialize the e-Paper display and get device info.
-    IT8951_Dev_Info dev_info = EPD_IT8951_Init(VCOM);
-    if (dev_info.Panel_W == 0 || dev_info.Panel_H == 0) {
+    global_dev_info = EPD_IT8951_Init(VCOM);
+    if (global_dev_info.Panel_W == 0 || global_dev_info.Panel_H == 0) {
         fprintf(stderr, "e-Paper display initialization failed.\n");
         DEV_Module_Exit();
         return EXIT_FAILURE;
     }
-    UDOUBLE init_value = dev_info.Memory_Addr_L | (dev_info.Memory_Addr_H << 16);
+    UDOUBLE init_value = global_dev_info.Memory_Addr_L | (global_dev_info.Memory_Addr_H << 16);
     Init_Target_Memory_Addr = init_value;  // Assign the computed value
 
     
     // Clear the display before starting.
     // (Display_Clear() would be a wrapper inside display_app that calls EPD_IT8951_Clear_Refresh()
     //  using the proper mode and parameters.)
-    Display_Clear(dev_info, Init_Target_Memory_Addr);
+    Display_Clear(global_dev_info, Init_Target_Memory_Addr);
 
     // -------------------------------
     // MQTT Initialization and Setup
@@ -99,6 +107,10 @@ int main(int argc, char *argv[]) {
     // In this simple loop, we simply let the MQTT handler process incoming messages.
     // In a more sophisticated design, you might use a select() loop or a proper MQTT
     // client library that provides its own event loop.
+
+    // Initialize the timestamp so that the default image doesn't load immediately.
+    last_image_display_time = time(NULL);
+
     while (running) {
         // Process incoming MQTT messages.
         // (This function should call your callback to display images via Process_MQTT_Message().)
@@ -106,6 +118,14 @@ int main(int argc, char *argv[]) {
 
         // Sleep briefly so we don’t busy-wait.
         sleep(1);
+        // Only switch to the default image if a custom image is currently displayed
+        // and the timeout has elapsed.
+        if (current_image_type == IMAGE_CUSTOM && (time(NULL) - last_image_display_time >= DEFAULT_IMAGE_TIMEOUT)) {
+            Display_ShowSpecialImage(DEFAULT_IMAGE_PATH, global_dev_info, Init_Target_Memory_Addr);
+            // Set the flag to indicate default image is now displayed.
+            current_image_type = IMAGE_DEFAULT;
+            // Do not update last_image_display_time here, so it doesn't keep refreshing default repeatedly.
+        }
     }
 
     // -------------------------------
@@ -117,7 +137,7 @@ int main(int argc, char *argv[]) {
     MQTT_Cleanup();
 
     // Optionally refresh the display to a blank state before exit.
-    Display_Clear(dev_info, Init_Target_Memory_Addr);
+    Display_Clear(global_dev_info, Init_Target_Memory_Addr);
 
     // Put the e-Paper display into sleep mode.
     EPD_IT8951_Sleep();

@@ -1,140 +1,117 @@
+//display_app.c
 #include "display_app.h"
-#include "../lib/GUI/GUI_Paint.h"      // Contains Paint_NewImage(), Paint_SelectImage(), etc.
-#include "../lib/GUI/GUI_BMPfile.h"    // Contains GUI_ReadBmp()
-#include "../lib/Config/Debug.h"       // Debug() macro or function for logging
+#include "../lib/GUI/GUI_Paint.h"
+#include "../lib/GUI/GUI_BMPfile.h"
+#include "../lib/Config/Debug.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <cjson/cJSON.h>
+#include <time.h>
 
-// Global frame buffer pointer (used during image display)
+time_t last_image_display_time = 0;
+DisplayImageType current_image_type = IMAGE_DEFAULT;
 static UBYTE *Refresh_Frame_Buf = NULL;
 
-/**
- * @brief Clear the e-Paper display.
- *
- * This function creates a blank image and calls the low-level refresh routine.
- */
-void Display_Clear(IT8951_Dev_Info dev_info, UDOUBLE init_target_memory_addr) {
-    // Determine panel dimensions; you might need to adjust these values.
-    UWORD panel_width  = dev_info.Panel_W;
-    UWORD panel_height = dev_info.Panel_H;
-    // Ensure the width is 32-bit aligned if required.
-    UWORD aligned_width = panel_width - (panel_width % 32);
+extern IT8951_Dev_Info global_dev_info;
+extern UDOUBLE Init_Target_Memory_Addr;
 
-    // Calculate the image size for 4 bits per pixel.
-    UDOUBLE image_size = ((aligned_width * 4 + 7) / 8) * panel_height;
+/* Helper to calculate aligned width and image buffer size */
+static void computeAlignedWidthAndBufferSize(IT8951_Dev_Info dev_info, UWORD *aligned_width, UDOUBLE *buffer_size) {
+    UWORD width = dev_info.Panel_W;
+    UWORD height = dev_info.Panel_H;
+    *aligned_width = width - (width % 32);
+    *buffer_size = (((*aligned_width) * 4 + 7) / 8) * height;
+}
 
-    Refresh_Frame_Buf = (UBYTE *)malloc(image_size);
-    if (Refresh_Frame_Buf == NULL) {
-        Debug("Display_Clear: Failed to allocate memory for frame buffer.\n");
+static inline const char* getDefaultImageFilename() {
+    const char *slash = strrchr(DEFAULT_IMAGE_PATH, '/');
+    return slash ? slash + 1 : DEFAULT_IMAGE_PATH;
+}
+
+/* Generic function to load and display an image.
+   If imagePath is an empty string, the display is simply cleared. */
+static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info, UDOUBLE mem_addr) {
+    UWORD aligned_width;
+    UDOUBLE buffer_size;
+    computeAlignedWidthAndBufferSize(dev_info, &aligned_width, &buffer_size);
+
+    UBYTE *buffer = (UBYTE *)malloc(buffer_size);
+    if (!buffer) {
+        Debug("loadAndDisplayImage: Memory allocation failed.\n");
         return;
     }
-
-    // Create a new image (using black as the default color, then clear to white)
-    Paint_NewImage(Refresh_Frame_Buf, aligned_width, panel_height, 0, BLACK);
-    Paint_SelectImage(Refresh_Frame_Buf);
+    
+    Paint_NewImage(buffer, aligned_width, dev_info.Panel_H, 0, BLACK);
+    Paint_SelectImage(buffer);
     Paint_SetRotate(ROTATE_0);
     Paint_SetMirroring(MIRROR_NONE);
     Paint_SetBitsPerPixel(4);
     Paint_Clear(WHITE);
 
-    // Use the low-level refresh function.
-    // (INIT_Mode is assumed defined in your project – adjust if needed.)
-    EPD_IT8951_4bp_Refresh(Refresh_Frame_Buf, 0, 0, aligned_width, panel_height, false, init_target_memory_addr, true);
-
-    free(Refresh_Frame_Buf);
-    Refresh_Frame_Buf = NULL;
+    if (imagePath && strlen(imagePath) > 0) {
+        if (GUI_ReadBmp(imagePath, 0, 0) != 0) {
+            Debug("loadAndDisplayImage: Failed to load image %s\n", imagePath);
+        }
+    }
+    
+    EPD_IT8951_4bp_Refresh(buffer, 0, 0, aligned_width, dev_info.Panel_H, false, mem_addr, true);
+    free(buffer);
+    last_image_display_time = time(NULL);
 }
 
-/**
- * @brief Process an incoming MQTT message to display a BMP image.
- *
- * The JSON message must contain a "Filename" key with the name of the BMP file.
- */
+/* Clears the display by loading a blank image */
+void Display_Clear(IT8951_Dev_Info dev_info, UDOUBLE init_target_memory_addr) {
+    loadAndDisplayImage("", dev_info, init_target_memory_addr);
+}
+
+/* Displays a special image (such as default or disconnected) */
+void Display_ShowSpecialImage(const char *imagePath, IT8951_Dev_Info dev_info, UDOUBLE init_target_memory_addr) {
+    loadAndDisplayImage(imagePath, dev_info, init_target_memory_addr);
+    current_image_type = IMAGE_DEFAULT;
+}
+
+/* Process an incoming MQTT message */
 void Process_MQTT_Message(const char *message) {
-    if (message == NULL || strlen(message) == 0) {
+    if (!message || strlen(message) == 0) {
         Debug("Process_MQTT_Message: Received empty message.\n");
         return;
     }
-
-    // Parse the JSON message.
     cJSON *json = cJSON_Parse(message);
-    if (json == NULL) {
+    if (!json) {
         Debug("Process_MQTT_Message: Error parsing JSON.\n");
         return;
     }
-
-    // Extract the filename.
     cJSON *filename_item = cJSON_GetObjectItemCaseSensitive(json, "Filename");
-    if (!cJSON_IsString(filename_item) || (filename_item->valuestring == NULL)) {
+    if (!cJSON_IsString(filename_item) || !filename_item->valuestring) {
         Debug("Process_MQTT_Message: Invalid or missing 'Filename' in JSON.\n");
         cJSON_Delete(json);
         return;
     }
-
     char filename[128];
     strncpy(filename, filename_item->valuestring, sizeof(filename));
-    filename[sizeof(filename) - 1] = '\0';
+    filename[sizeof(filename)-1] = '\0';
     cJSON_Delete(json);
-
-    // Construct the file path (assuming images are stored in the "pic" folder)
+    
     char filepath[256];
     snprintf(filepath, sizeof(filepath), "./pic/%s", filename);
     Debug("Process_MQTT_Message: Displaying BMP file: %s\n", filepath);
 
-    // Set panel dimensions; adjust these to match your display.
-    UWORD panel_width  = 1448;
-    UWORD panel_height = 1072;
-    UWORD aligned_width = panel_width - (panel_width % 32);
-    UDOUBLE image_size = ((aligned_width * 4 + 7) / 8) * panel_height;
-
-    Refresh_Frame_Buf = (UBYTE *)malloc(image_size);
-    if (Refresh_Frame_Buf == NULL) {
-        Debug("Process_MQTT_Message: Failed to allocate memory for frame buffer.\n");
-        return;
-    }
-
-    // Create a new image and prepare the drawing environment.
-    Paint_NewImage(Refresh_Frame_Buf, aligned_width, panel_height, 0, BLACK);
-    Paint_SelectImage(Refresh_Frame_Buf);
-    Paint_SetRotate(ROTATE_0);
-    Paint_SetMirroring(MIRROR_NONE);
-    Paint_SetBitsPerPixel(4);
-    Paint_Clear(WHITE);
-
-    // Read and draw the BMP image onto the frame buffer.
-    if (GUI_ReadBmp(filepath, 0, 0) != 0) {
-        Debug("Process_MQTT_Message: Failed to read BMP file: %s\n", filepath);
+    loadAndDisplayImage(filepath, global_dev_info, Init_Target_Memory_Addr);
+    
+    // Update the image type flag. For example, if a specific filename indicates default.
+    if (strcmp(filename, getDefaultImageFilename()) == 0) {
+        current_image_type = IMAGE_DEFAULT;
     } else {
-        // Assume that Init_Target_Memory_Addr is defined elsewhere or passed to this module.
-        extern UDOUBLE Init_Target_Memory_Addr;
-        EPD_IT8951_4bp_Refresh(Refresh_Frame_Buf, 0, 0, aligned_width, panel_height, false, Init_Target_Memory_Addr, true);
+        current_image_type = IMAGE_CUSTOM;
     }
-
-    free(Refresh_Frame_Buf);
-    Refresh_Frame_Buf = NULL;
 }
 
-/**
- * @brief Run a simple factory test routine.
- *
- * This routine cycles through a few test patterns and images.
- */
+/* Factory test routine (unchanged for now) */
 void Display_FactoryTest(IT8951_Dev_Info dev_info, UDOUBLE init_target_memory_addr) {
     Debug("Display_FactoryTest: Starting factory test...\n");
-
-    // Clear the display.
     Display_Clear(dev_info, init_target_memory_addr);
     DEV_Delay_ms(2000);
-
-    // You can add more test routines here, e.g.,:
-    // - Display test patterns
-    // - Run dynamic refresh tests
-    // - Display a series of BMP images
-    // For demonstration, we simply log the test progress.
     Debug("Display_FactoryTest: Running pattern test...\n");
-    // ... (insert additional tests as needed) ...
-
     Debug("Display_FactoryTest: Factory test completed.\n");
 }

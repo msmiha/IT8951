@@ -4,11 +4,17 @@
             "cwd": "/home/pi/IT8951",
             "binaryPath": "/home/pi/IT8951/epd",
             "binaryArgs": []
+        },
+        {
+            "cwd": "/home/pi/IT8951_MQTT",
+            "binaryPath": "/home/pi/IT8951_MQTT/epd",
+            "binaryArgs": []
         }
     ],
     "files.associations": {
         "epd_it8951.h": "c",
         "gui_bmpfile.h": "c",
-        "display_app.h": "c"
+        "display_app.h": "c",
+        "dev_config.h": "c"
     }
 }
