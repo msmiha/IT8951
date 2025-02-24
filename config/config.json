@@ -1,0 +1,11 @@
+{
+    "DEFAULT_IMAGE_PATH": "./pic/Rottweiler.bmp",
+    "NO_IMAGE_AVAILABLE_PATH": "./pic/No_Image_Available.bmp",
+    "MQTT_ADDRESS": "mqtt://192.168.1.15:1883",
+    "MQTT_CLIENTID": "EpaperDisplayTM1",
+    "MQTT_TOPIC": "fontana/tm/1/epaper/image",
+    "MQTT_QOS": 0,
+    "DEFAULT_IMAGE_TIMEOUT": 10,
+    "INITIAL_RECONNECT_TIMEOUT": 1,
+    "MAX_RECONNECT_TIMEOUT": 60
+  }  
