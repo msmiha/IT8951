@@ -148,7 +148,7 @@ static void EPD_IT8951_WriteMuitiData(UWORD* Data_Buf, UDOUBLE Length)
 function :	write multi data burst
 parameter:  data
 ******************************************************************************/
-#define BURST_SIZE 256   // Adjust this value as needed
+#define BURST_SIZE 512   // Adjust this value as needed
 
 static void EPD_IT8951_WriteMuitiData_Burst(UWORD* Data_Buf, UDOUBLE TotalLength)
 {
@@ -594,7 +594,7 @@ static void EPD_IT8951_HostAreaPackedPixelWrite_4bp_PerRow(IT8951_Load_Img_Info*
 
 // Adjust these defines as needed.
 #define TELEGRAM_ROWS 100    // Number of rows to send in one telegram.
-#define BURST_SIZE    8190   // Maximum number of 16-bit words to send per burst.
+//#define BURST_SIZE    8190   // Maximum number of 16-bit words to send per burst.
 
 // Combined per-telegram and burst-based write for 4bpp images.
 static void EPD_IT8951_HostAreaPackedPixelWrite_4bp_Telegram(IT8951_Load_Img_Info* Load_Img_Info,

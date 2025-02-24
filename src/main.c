@@ -10,22 +10,10 @@
 #include "mqtt_handler.h"   // Contains MQTT_Init(), MQTT_Connect(), MQTT_Subscribe(), MQTT_Process(), etc.
 #include "../lib/Config/DEV_Config.h"  // Hardware initialization routines
 #include "../lib/e-Paper/EPD_IT8951.h"  // Ensure that UDOUBLE is defined
+#include "config.h"
 
 // Define VCOM if not defined elsewhere
 #define VCOM 2010
-
-#define FUNCTION "tm"
-#define DEV_ID   "1"
-
-
-// Define MQTT parameters
-#define MQTT_ADDRESS "mqtt://192.168.1.15:1883"
-#define MQTT_CLIENTID "EpaperDisplay_" FUNCTION DEV_ID
-#define MQTT_TOPIC  "fontana/"FUNCTION"/"DEV_ID"/epaper/image"
-#define MQTT_QOS 0
-
-// Default image timeout in seconds.
-#define DEFAULT_IMAGE_TIMEOUT 10
 
 // Make sure to declare external references to the timestamp and current image type.
 extern time_t last_image_display_time;
@@ -49,6 +37,12 @@ int main(int argc, char *argv[]) {
     // Set up signal handling so we can exit gracefully.
     if (signal(SIGINT, signal_handler) == SIG_ERR) {
         fprintf(stderr, "Failed to set signal handler\n");
+        return EXIT_FAILURE;
+    }
+
+    // Load configuration from file.
+    if (loadConfig("./config/config.json", &globalConfig) != 0) {
+        fprintf(stderr, "Failed to load configuration. Exiting.\n");
         return EXIT_FAILURE;
     }
 
@@ -84,7 +78,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize the MQTT client.
     // For example, MQTT_Init() may set up the broker address, client ID, and topic.
-    if (MQTT_Init(MQTT_ADDRESS, MQTT_CLIENTID, MQTT_TOPIC) != 0) {
+    if (MQTT_Init(globalConfig.mqttAddress, globalConfig.mqttClientID, globalConfig.mqttTopic) != 0) {
         fprintf(stderr, "MQTT initialization failed.\n");
         DEV_Module_Exit();
         return EXIT_FAILURE;
@@ -98,7 +92,7 @@ int main(int argc, char *argv[]) {
     }
     
     // Subscribe to the desired MQTT topic.
-    MQTT_Subscribe(NULL, MQTT_QOS);
+    MQTT_Subscribe(NULL, globalConfig.mqttQos);
 
     // -------------------------------
     // Main Loop
@@ -120,8 +114,9 @@ int main(int argc, char *argv[]) {
         sleep(1);
         // Only switch to the default image if a custom image is currently displayed
         // and the timeout has elapsed.
-        if (current_image_type == IMAGE_CUSTOM && (time(NULL) - last_image_display_time >= DEFAULT_IMAGE_TIMEOUT)) {
-            Display_ShowSpecialImage(DEFAULT_IMAGE_PATH, global_dev_info, Init_Target_Memory_Addr);
+        if (current_image_type == IMAGE_CUSTOM && (time(NULL) - last_image_display_time >= globalConfig.defaultImageTimeout)) {
+            //Display_ShowSpecialImage(DEFAULT_IMAGE_PATH, global_dev_info, Init_Target_Memory_Addr);
+            Display_ShowSpecialImage(globalConfig.defaultImagePath, global_dev_info, Init_Target_Memory_Addr);
             // Set the flag to indicate default image is now displayed.
             current_image_type = IMAGE_DEFAULT;
             // Do not update last_image_display_time here, so it doesn't keep refreshing default repeatedly.

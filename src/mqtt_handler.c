@@ -6,20 +6,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include "MQTTClient.h"             // Paho MQTT Client header
+#include "config.h"
 
 // Maximum sizes for internal storage.
 #define MAX_ADDR_LEN     256
 #define MAX_CLIENTID_LEN 128
 #define MAX_TOPIC_LEN    256
-
-// Default reconnect timeouts (in seconds)
-#define INITIAL_RECONNECT_TIMEOUT 5
-#define MAX_RECONNECT_TIMEOUT     60
-
-// If not defined elsewhere, default QoS to 0.
-#ifndef MQTT_QOS
-#define MQTT_QOS 0
-#endif
 
 // Static variables to hold connection parameters and the client.
 static MQTTClient client;
@@ -29,7 +21,7 @@ static char mqtt_topic[MAX_TOPIC_LEN];
 static int mqtt_qos = 0;  // Default QoS level
 
 // Default reconnect timeout (in seconds); mutable for exponential backoff.
-static int mqtt_reconnect_timeout = INITIAL_RECONNECT_TIMEOUT;
+static int mqtt_reconnect_timeout;
 
 // Flag indicating connection status.
 static int connected = 0;
@@ -75,7 +67,10 @@ int MQTT_Init(const char *address, const char *clientID, const char *topic) {
         Debug("MQTT_Init: Invalid parameters provided.\n");
         return -1;
     }
-    
+
+    mqtt_reconnect_timeout = globalConfig.initialReconnectTimeout;
+    Debug("MQTT_Init: Using reconnect timeout: %d seconds\n", mqtt_reconnect_timeout);
+
     strncpy(mqtt_address, address, MAX_ADDR_LEN - 1);
     mqtt_address[MAX_ADDR_LEN - 1] = '\0';
     
@@ -103,7 +98,7 @@ int MQTT_Init(const char *address, const char *clientID, const char *topic) {
 static void mqttReconnect(void) {
     Debug("MQTT_Process: Detected lost connection. Attempting to reconnect...\n");
     MQTT_Connect();
-    MQTT_Subscribe(NULL, MQTT_QOS);
+    MQTT_Subscribe(NULL, globalConfig.mqttQos);
 }
 
 /**
@@ -123,18 +118,22 @@ int MQTT_Connect(void) {
         Debug("MQTT_Connect: Failed to connect, return code %d. Reconnecting in %d seconds...\n", 
               rc, mqtt_reconnect_timeout);
         sleep(mqtt_reconnect_timeout);
-        if (mqtt_reconnect_timeout < MAX_RECONNECT_TIMEOUT) {
+        if (mqtt_reconnect_timeout * 2 < globalConfig.maxReconnectTimeout) {
             mqtt_reconnect_timeout *= 2;  // Exponential backoff.
         }
+        else {
+            mqtt_reconnect_timeout = globalConfig.maxReconnectTimeout;
+        }        
     }
     
     // Reset reconnect timeout after a successful connection.
-    mqtt_reconnect_timeout = INITIAL_RECONNECT_TIMEOUT;
+    mqtt_reconnect_timeout = globalConfig.initialReconnectTimeout;
     connected = 1;
     Debug("MQTT_Connect: Connected to broker at %s\n", mqtt_address);
     
     // Display the default image upon connection.
-    Display_ShowSpecialImage(DEFAULT_IMAGE_PATH, global_dev_info, Init_Target_Memory_Addr);
+    //Display_ShowSpecialImage(DEFAULT_IMAGE_PATH, global_dev_info, Init_Target_Memory_Addr);
+    Display_ShowSpecialImage(globalConfig.defaultImagePath, global_dev_info, Init_Target_Memory_Addr);
     return rc;
 }
 

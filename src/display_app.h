@@ -10,10 +10,6 @@ extern "C" {
 #include "../lib/Config/DEV_Config.h"   // Hardware initialization routines.
 #include <time.h>                       // For time_t
 
-#ifndef DEFAULT_IMAGE_PATH
-#define DEFAULT_IMAGE_PATH "./pic/Rottweiler.bmp"
-#endif
-
 /**
  * @brief Enumerates the type of image currently displayed.
  */

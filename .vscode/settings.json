@@ -15,6 +15,7 @@
         "epd_it8951.h": "c",
         "gui_bmpfile.h": "c",
         "display_app.h": "c",
-        "dev_config.h": "c"
+        "dev_config.h": "c",
+        "cjson.h": "c"
     }
 }

@@ -8,10 +8,11 @@
 #include <string.h>
 #include <cjson/cJSON.h>
 #include <time.h>
+#include "config.h"
 
 time_t last_image_display_time = 0;
 DisplayImageType current_image_type = IMAGE_DEFAULT;
-static UBYTE *Refresh_Frame_Buf = NULL;
+//static UBYTE *Refresh_Frame_Buf = NULL;
 
 extern IT8951_Dev_Info global_dev_info;
 extern UDOUBLE Init_Target_Memory_Addr;
@@ -25,12 +26,15 @@ static void computeAlignedWidthAndBufferSize(IT8951_Dev_Info dev_info, UWORD *al
 }
 
 static inline const char* getDefaultImageFilename() {
-    const char *slash = strrchr(DEFAULT_IMAGE_PATH, '/');
-    return slash ? slash + 1 : DEFAULT_IMAGE_PATH;
+    const char *slash = strrchr(globalConfig.defaultImagePath, '/');
+    return slash ? slash + 1 : globalConfig.defaultImagePath;
 }
 
 /* Generic function to load and display an image.
-   If imagePath is an empty string, the display is simply cleared. */
+   If imagePath is non-empty, it attempts to load it.
+   If that fails, it attempts to load the fallback image (NO_IMAGE_AVAILABLE_PATH).
+   Finally, the display is refreshed using the given memory address.
+*/
 static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info, UDOUBLE mem_addr) {
     UWORD aligned_width;
     UDOUBLE buffer_size;
@@ -50,8 +54,15 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
     Paint_Clear(WHITE);
 
     if (imagePath && strlen(imagePath) > 0) {
-        if (GUI_ReadBmp(imagePath, 0, 0) != 0) {
-            Debug("loadAndDisplayImage: Failed to load image %s\n", imagePath);
+        int ret = GUI_ReadBmp(imagePath, 0, 0);
+        if (ret != 0) {
+            Debug("loadAndDisplayImage: Failed to load image %s, error code %d. Attempting fallback.\n", imagePath, ret);
+            if (strcmp(imagePath, globalConfig.noImageAvailablePath) != 0) {
+                ret = GUI_ReadBmp(globalConfig.noImageAvailablePath, 0, 0);
+                if (ret != 0) {
+                    Debug("loadAndDisplayImage: Fallback image %s also failed, error code %d.\n", globalConfig.noImageAvailablePath, ret);
+                }
+            }
         }
     }
     
