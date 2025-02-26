@@ -12,7 +12,7 @@
 
 time_t last_image_display_time = 0;
 DisplayImageType current_image_type = IMAGE_DEFAULT;
-//static UBYTE *Refresh_Frame_Buf = NULL;
+volatile int loading_image = 0;  // Flag indicating an image load is in progress
 
 extern IT8951_Dev_Info global_dev_info;
 extern UDOUBLE Init_Target_Memory_Addr;
@@ -36,6 +36,15 @@ static inline const char* getDefaultImageFilename() {
    Finally, the display is refreshed using the given memory address.
 */
 static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info, UDOUBLE mem_addr) {
+    // If an image is already being loaded, skip this request.
+    if (loading_image) {
+        Debug("loadAndDisplayImage: Another image load is in progress. Skipping this request.\n");
+        return;
+    }
+    
+    // Mark that an image load is in progress.
+    loading_image = 1;
+
     UWORD aligned_width;
     UDOUBLE buffer_size;
     computeAlignedWidthAndBufferSize(dev_info, &aligned_width, &buffer_size);
@@ -43,6 +52,7 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
     UBYTE *buffer = (UBYTE *)malloc(buffer_size);
     if (!buffer) {
         Debug("loadAndDisplayImage: Memory allocation failed.\n");
+        loading_image = 0; // Release the flag before returning.
         return;
     }
     
@@ -57,6 +67,7 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
         int ret = GUI_ReadBmp(imagePath, 0, 0);
         if (ret != 0) {
             Debug("loadAndDisplayImage: Failed to load image %s, error code %d. Attempting fallback.\n", imagePath, ret);
+            // Attempt to load the fallback image if the requested image isn’t the fallback.
             if (strcmp(imagePath, globalConfig.noImageAvailablePath) != 0) {
                 ret = GUI_ReadBmp(globalConfig.noImageAvailablePath, 0, 0);
                 if (ret != 0) {
@@ -69,6 +80,9 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
     EPD_IT8951_4bp_Refresh(buffer, 0, 0, aligned_width, dev_info.Panel_H, false, mem_addr, true);
     free(buffer);
     last_image_display_time = time(NULL);
+    
+    // Mark that image loading has finished.
+    loading_image = 0;
 }
 
 /* Clears the display by loading a blank image */
@@ -104,13 +118,20 @@ void Process_MQTT_Message(const char *message) {
     filename[sizeof(filename)-1] = '\0';
     cJSON_Delete(json);
     
+    // If the requested file is the default image and it's already loaded, do nothing.
+    // (Use strcasecmp for case-insensitive comparison if needed)
+    if ((strcmp(filename, getDefaultImageFilename()) == 0) && (current_image_type == IMAGE_DEFAULT)) {
+        Debug("Default image already loaded.\n");
+        return;
+    }
+    
     char filepath[256];
     snprintf(filepath, sizeof(filepath), "./pic/%s", filename);
     Debug("Process_MQTT_Message: Displaying BMP file: %s\n", filepath);
 
     loadAndDisplayImage(filepath, global_dev_info, Init_Target_Memory_Addr);
     
-    // Update the image type flag. For example, if a specific filename indicates default.
+    // Update the image type flag based on the filename.
     if (strcmp(filename, getDefaultImageFilename()) == 0) {
         current_image_type = IMAGE_DEFAULT;
     } else {

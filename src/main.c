@@ -115,7 +115,7 @@ int main(int argc, char *argv[]) {
         // Only switch to the default image if a custom image is currently displayed
         // and the timeout has elapsed.
         if (current_image_type == IMAGE_CUSTOM && (time(NULL) - last_image_display_time >= globalConfig.defaultImageTimeout)) {
-            //Display_ShowSpecialImage(DEFAULT_IMAGE_PATH, global_dev_info, Init_Target_Memory_Addr);
+            
             Display_ShowSpecialImage(globalConfig.defaultImagePath, global_dev_info, Init_Target_Memory_Addr);
             // Set the flag to indicate default image is now displayed.
             current_image_type = IMAGE_DEFAULT;

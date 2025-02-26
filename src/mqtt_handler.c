@@ -131,8 +131,7 @@ int MQTT_Connect(void) {
     connected = 1;
     Debug("MQTT_Connect: Connected to broker at %s\n", mqtt_address);
     
-    // Display the default image upon connection.
-    //Display_ShowSpecialImage(DEFAULT_IMAGE_PATH, global_dev_info, Init_Target_Memory_Addr);
+    // Display the default image upon connection.    
     Display_ShowSpecialImage(globalConfig.defaultImagePath, global_dev_info, Init_Target_Memory_Addr);
     return rc;
 }
