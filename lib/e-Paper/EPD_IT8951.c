@@ -31,6 +31,13 @@
 #include "EPD_IT8951.h"
 #include <time.h>
 
+// Define telegram and burst sizes.
+#define TELEGRAM_ROWS 100    // Number of rows per telegram.
+#define BURST_SIZE    8190   // Maximum number of 16-bit words per burst.
+// Buffer size: 2 bytes for preamble + 2 bytes per word.
+#define SPI_BUFFER_SIZE (2 + (BURST_SIZE * 2))
+
+
 //basic mode definition
 UBYTE INIT_Mode = 0;
 UBYTE GC16_Mode = 2;
@@ -148,7 +155,6 @@ static void EPD_IT8951_WriteMuitiData(UWORD* Data_Buf, UDOUBLE Length)
 function :	write multi data burst
 parameter:  data
 ******************************************************************************/
-#define BURST_SIZE 512   // Adjust this value as needed
 
 static void EPD_IT8951_WriteMuitiData_Burst(UWORD* Data_Buf, UDOUBLE TotalLength)
 {
@@ -592,104 +598,216 @@ static void EPD_IT8951_HostAreaPackedPixelWrite_4bp_PerRow(IT8951_Load_Img_Info*
     }
 }
 
-// Adjust these defines as needed.
-#define TELEGRAM_ROWS 100    // Number of rows to send in one telegram.
-//#define BURST_SIZE    8190   // Maximum number of 16-bit words to send per burst.
-
-// Combined per-telegram and burst-based write for 4bpp images.
+// Combined per-telegram & burst-based write for 4bpp images.
 static void EPD_IT8951_HostAreaPackedPixelWrite_4bp_Telegram(IT8951_Load_Img_Info* Load_Img_Info,
                                                               IT8951_Area_Img_Info* Area_Img_Info)
 {
-    // Calculate words per row.
-    // For 4 bits per pixel: each pixel uses 0.5 byte.
-    // Thus, for Area_W pixels, you have (Area_W / 2) bytes.
-    // Each word is 2 bytes, so:
-    //    words_per_row = (Area_W/2)/2 = Area_W/4.
-    // (This assumes that Area_W is chosen so that no extra padding is needed.)
+    // For 4 bits per pixel, each pixel is 0.5 byte.
+    // Therefore, for Area_W pixels: (Area_W / 2) bytes total.
+    // Each 16-bit word holds 2 bytes: words_per_row = (Area_W / 2) / 2 = Area_W / 4.
     UWORD words_per_row = (Area_Img_Info->Area_W * 4 / 8) / 2;
-    
-    // Total number of rows in the image area.
     UWORD total_rows = Area_Img_Info->Area_H;
-    
-    // Pointer to the source image data (assumed to be arranged as 16-bit words).
     UWORD* Source_Buffer = (UWORD*)Load_Img_Info->Source_Buffer_Addr;
-    
-    // Row offset (how many rows have been sent so far).
     UWORD current_row = 0;
+    
+    // Temporary buffer for SPI burst transfers.
+    uint8_t spi_tx_buffer[SPI_BUFFER_SIZE];
     
     while (current_row < total_rows)
     {
-        // Determine how many rows to send in this telegram.
-        // (If fewer than TELEGRAM_ROWS remain, just send the remainder.)
+        // Determine the number of rows to send in this telegram.
         UWORD telegram_rows = TELEGRAM_ROWS;
         if ((total_rows - current_row) < telegram_rows)
         {
             telegram_rows = total_rows - current_row;
         }
         
-        // Prepare an area structure for this telegram.
+        // Prepare a telegram-specific area structure.
         IT8951_Area_Img_Info telegram_area = *Area_Img_Info;
         telegram_area.Area_Y = Area_Img_Info->Area_Y + current_row;
-        telegram_area.Area_H = telegram_rows;  // Block height is the number of rows in this telegram.
+        telegram_area.Area_H = telegram_rows;
         
-        // Set the target memory address (if required by your design).
+        // Set target memory address and start the load image command.
         EPD_IT8951_SetTargetMemoryAddr(Load_Img_Info->Target_Memory_Addr);
-        
-        // Start the load command for this telegram.
         EPD_IT8951_LoadImgAreaStart(Load_Img_Info, &telegram_area);
         
-        // Compute total number of 16-bit words in this telegram.
+        // Calculate total number of 16-bit words for this telegram.
         UDOUBLE telegram_words = (UDOUBLE)words_per_row * telegram_rows;
-        
-        // Now send the telegram data in bursts.
-        // We are taking data starting at current_row * words_per_row in the source buffer.
         UDOUBLE remaining = telegram_words;
         UDOUBLE offset = (UDOUBLE)current_row * words_per_row;
         
+        // Loop: send data in bursts.
         while (remaining > 0)
         {
-            // Send up to BURST_SIZE words at a time.
+            // Determine the burst size.
             UDOUBLE burst = (remaining > BURST_SIZE) ? BURST_SIZE : remaining;
             
-            // Before starting the burst, wait for the controller to be ready.
+            // Wait until the controller is ready.
             EPD_IT8951_ReadBusy();
             
-            // Begin burst: assert CS and send the write command preamble.
-            DEV_Digital_Write(EPD_CS_PIN, LOW);
-            {
-                UWORD Write_Preamble = 0x0000;
-                DEV_SPI_WriteByte(Write_Preamble >> 8);
-                DEV_SPI_WriteByte(Write_Preamble & 0xFF);
-            }
-            EPD_IT8951_ReadBusy();
+            // Build the SPI transmit buffer:
+            // First 2 bytes: write command preamble (0x0000).
+            spi_tx_buffer[0] = 0x00;
+            spi_tx_buffer[1] = 0x00;
             
-            // Send the burst of words.
+            // Next: burst data (each 16-bit word becomes 2 bytes, big-endian).
             for (UDOUBLE i = 0; i < burst; i++)
             {
                 UWORD word = Source_Buffer[offset + i];
-                DEV_SPI_WriteByte(word >> 8);
-                DEV_SPI_WriteByte(word & 0xFF);
+                spi_tx_buffer[2 + (i * 2)]     = (word >> 8) & 0xFF;
+                spi_tx_buffer[2 + (i * 2) + 1] = word & 0xFF;
             }
             
-            // End burst: deassert CS.
+            // Assert chip select, optionally check busy state.
+            DEV_Digital_Write(EPD_CS_PIN, LOW);
+            EPD_IT8951_ReadBusy();
+            
+            // Transfer the entire buffer in one bulk SPI call.
+            DEV_SPI_WriteBuffer(spi_tx_buffer, 2 + (burst * 2));
+            
+            // Deassert chip select.
             DEV_Digital_Write(EPD_CS_PIN, HIGH);
             
             offset    += burst;
             remaining -= burst;
-            
-            // Optionally, insert a short delay between bursts if needed:
-            // DEV_Delay_ms(1);
         }
         
         // End the load image command for the current telegram.
         EPD_IT8951_LoadImgEnd();
-        
-        // Optional: wait for the controller before starting the next telegram.
         EPD_IT8951_ReadBusy();
-        
-        // Move to the next block of rows.
         current_row += telegram_rows;
     }
+}
+
+static void EPD_IT8951_HostAreaPackedPixelWrite_4bp_WholeImage(IT8951_Load_Img_Info* Load_Img_Info,
+                                                                 IT8951_Area_Img_Info* Area_Img_Info)
+{
+    // For 4bpp: each pixel uses 0.5 byte.
+    // Thus, for Area_W pixels: (Area_W / 2) bytes.
+    // Each 16-bit word holds 2 bytes, so:
+    //    words_per_row = (Area_W / 2) / 2 = Area_W / 4.
+    UWORD words_per_row = (Area_Img_Info->Area_W * 4 / 8) / 2;
+    UWORD total_rows = Area_Img_Info->Area_H;
+    UWORD* Source_Buffer = (UWORD*)Load_Img_Info->Source_Buffer_Addr;
+
+    // Allocate a temporary buffer for SPI burst transfers.
+    uint8_t spi_tx_buffer[SPI_BUFFER_SIZE];
+
+    // Use one telegram for the whole image.
+    IT8951_Area_Img_Info whole_area = *Area_Img_Info;
+    // whole_area.Area_X and whole_area.Area_Y remain unchanged;
+    // whole_area.Area_H equals total_rows.
+    
+    // Set target memory address and start the load image command.
+    EPD_IT8951_SetTargetMemoryAddr(Load_Img_Info->Target_Memory_Addr);
+    EPD_IT8951_LoadImgAreaStart(Load_Img_Info, &whole_area);
+
+    // Calculate total number of 16-bit words in the image.
+    UDOUBLE total_words = (UDOUBLE)words_per_row * total_rows;
+    UDOUBLE remaining = total_words;
+    UDOUBLE offset = 0;
+
+    // Send the entire image data in bursts.
+    while (remaining > 0)
+    {
+        // Determine how many words to send in this burst.
+        UDOUBLE burst = (remaining > BURST_SIZE) ? BURST_SIZE : remaining;
+
+        // Wait until the controller is ready.
+        EPD_IT8951_ReadBusy();
+
+        // Build the SPI transmit buffer:
+        // First 2 bytes: write command preamble (0x0000).
+        spi_tx_buffer[0] = 0x00;
+        spi_tx_buffer[1] = 0x00;
+
+        // Next: burst data (each 16-bit word converted to 2 bytes, big-endian).
+        for (UDOUBLE i = 0; i < burst; i++)
+        {
+            UWORD word = Source_Buffer[offset + i];
+            spi_tx_buffer[2 + (i * 2)]     = (word >> 8) & 0xFF;
+            spi_tx_buffer[2 + (i * 2) + 1] = word & 0xFF;
+        }
+
+        // Assert chip select and (optionally) check busy state.
+        DEV_Digital_Write(EPD_CS_PIN, LOW);
+        EPD_IT8951_ReadBusy();
+
+        // Transfer the entire buffer in one bulk SPI call.
+        DEV_SPI_WriteBuffer(spi_tx_buffer, 2 + (burst * 2));
+
+        // Deassert chip select.
+        DEV_Digital_Write(EPD_CS_PIN, HIGH);
+
+        offset    += burst;
+        remaining -= burst;
+    }
+
+    // End the load image command.
+    EPD_IT8951_LoadImgEnd();
+    EPD_IT8951_ReadBusy();
+}
+
+static void EPD_IT8951_HostAreaPackedPixelWrite_4bp_OneChunk(IT8951_Load_Img_Info* Load_Img_Info,
+                                                              IT8951_Area_Img_Info* Area_Img_Info)
+{
+    // Calculate words per row.
+    // For 4 bits per pixel: each pixel uses 0.5 byte.
+    // Thus, for Area_W pixels: (Area_W / 2) bytes.
+    // Each 16-bit word holds 2 bytes, so:
+    //   words_per_row = (Area_W / 2) / 2 = Area_W / 4.
+    UWORD words_per_row = (Area_Img_Info->Area_W * 4 / 8) / 2;
+    UWORD total_rows = Area_Img_Info->Area_H;
+    UWORD* Source_Buffer = (UWORD*)Load_Img_Info->Source_Buffer_Addr;
+    
+    // Total number of 16-bit words in the image.
+    UDOUBLE total_words = (UDOUBLE)words_per_row * total_rows;
+    // Total bytes: 2 bytes for preamble + 2 bytes per word.
+    UDOUBLE total_bytes = 2 + (total_words * 2);
+
+    // Dynamically allocate the transmit buffer.
+    uint8_t *spi_tx_buffer = (uint8_t *)malloc(total_bytes);
+    if (spi_tx_buffer == NULL)
+    {
+        printf("Error: Failed to allocate SPI transmit buffer of size %lu bytes.\n", (unsigned long)total_bytes);
+        return;
+    }
+
+    // Build the buffer:
+    // First 2 bytes: write command preamble (0x0000).
+    spi_tx_buffer[0] = 0x00;
+    spi_tx_buffer[1] = 0x00;
+
+    // Next, convert the image data from 16-bit words to big-endian bytes.
+    for (UDOUBLE i = 0; i < total_words; i++)
+    {
+        UWORD word = Source_Buffer[i];
+        spi_tx_buffer[2 + (i * 2)]     = (word >> 8) & 0xFF;
+        spi_tx_buffer[2 + (i * 2) + 1] = word & 0xFF;
+    }
+
+    // Set target memory address and start the load image command for the whole image.
+    EPD_IT8951_SetTargetMemoryAddr(Load_Img_Info->Target_Memory_Addr);
+    EPD_IT8951_LoadImgAreaStart(Load_Img_Info, Area_Img_Info);
+
+    // Wait for the controller to be ready.
+    EPD_IT8951_ReadBusy();
+
+    // Assert CS and optionally check busy state again.
+    DEV_Digital_Write(EPD_CS_PIN, LOW);
+    EPD_IT8951_ReadBusy();
+
+    // Send the entire buffer in one bulk SPI call.
+    DEV_SPI_WriteBuffer(spi_tx_buffer, total_bytes);
+
+    // Deassert chip select.
+    DEV_Digital_Write(EPD_CS_PIN, HIGH);
+
+    // End the load image command.
+    EPD_IT8951_LoadImgEnd();
+    EPD_IT8951_ReadBusy();
+
+    free(spi_tx_buffer);
 }
 
 /******************************************************************************
@@ -1049,23 +1167,25 @@ void EPD_IT8951_4bp_Refresh(UBYTE* Frame_Buf, UWORD X, UWORD Y, UWORD W, UWORD H
     Area_Img_Info.Area_W = W;
     Area_Img_Info.Area_H = H;
 
-    struct timespec start, end;
+    /*struct timespec start, end;
     double elapsed_ms;
 
     // Record start time
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    clock_gettime(CLOCK_MONOTONIC, &start);*/
     //EPD_IT8951_HostAreaPackedPixelWrite_4bp(&Load_Img_Info, &Area_Img_Info, Packed_Write);
     //EPD_IT8951_HostAreaPackedPixelWrite_4bp_PerRow(&Load_Img_Info, &Area_Img_Info); 
     EPD_IT8951_HostAreaPackedPixelWrite_4bp_Telegram(&Load_Img_Info, &Area_Img_Info);       
+    //EPD_IT8951_HostAreaPackedPixelWrite_4bp_WholeImage(&Load_Img_Info, &Area_Img_Info);
+    //EPD_IT8951_HostAreaPackedPixelWrite_4bp_OneChunk(&Load_Img_Info, &Area_Img_Info);
 
-    // Record end time
+    /*// Record end time
     clock_gettime(CLOCK_MONOTONIC, &end);
 
     // Calculate elapsed time in milliseconds.
     elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 +
                  (end.tv_nsec - start.tv_nsec) / 1000000.0;
 
-    printf("Elapsed time HostAreaPackedPixelWrite: %f ms\n", elapsed_ms);
+    printf("Elapsed time HostAreaPackedPixelWrite: %f ms\n", elapsed_ms);*/
 
     if(Hold == true)
     {

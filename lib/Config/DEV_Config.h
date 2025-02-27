@@ -98,6 +98,8 @@ void DEV_Digital_Write(UWORD Pin, UBYTE Value);
 UBYTE DEV_Digital_Read(UWORD Pin);
 
 void DEV_SPI_WriteByte(UBYTE Value);
+// New: Write a buffer in a single bulk SPI transfer.
+void DEV_SPI_WriteBuffer(uint8_t *buffer, UDOUBLE length);
 UBYTE DEV_SPI_ReadByte();
 
 void DEV_Delay_ms(UDOUBLE xms);

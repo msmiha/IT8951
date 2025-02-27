@@ -35,10 +35,21 @@ extern UDOUBLE Init_Target_Memory_Addr;
  * Logs the received message and delegates processing to the display module.
  */
 static int messageArrived(void *context, char *topicName, int topicLen, MQTTClient_message *message) {
-    Debug("MQTT: Message received on topic \"%s\": %s\n", topicName, (char *)message->payload);
+    // Allocate a buffer for the payload plus a null terminator.
+    char *payloadStr = malloc(message->payloadlen + 1);
+    if (!payloadStr) {
+        Debug("MQTT: Failed to allocate memory for payload.\n");
+        MQTTClient_freeMessage(&message);
+        MQTTClient_free(topicName);
+        return 1;
+    }
+    memcpy(payloadStr, message->payload, message->payloadlen);
+    payloadStr[message->payloadlen] = '\0';  // Null-terminate the string
 
-    Process_MQTT_Message((char *)message->payload);
+    Debug("MQTT: Message received on topic \"%s\": %s\n", topicName, payloadStr);
+    Process_MQTT_Message(payloadStr);
 
+    free(payloadStr);
     MQTTClient_freeMessage(&message);
     MQTTClient_free(topicName);
     

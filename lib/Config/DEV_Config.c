@@ -85,6 +85,14 @@ void DEV_SPI_WriteByte(UBYTE Value)
 #endif
 }
 
+// New function: Write a buffer over SPI in one bulk transfer.
+void DEV_SPI_WriteBuffer(uint8_t *buffer, UDOUBLE length)
+{
+    // bcm2835_spi_transfern() performs a full-duplex transfer.
+    // For write-only operations, the returned data is ignored.
+    bcm2835_spi_transfern((char *)buffer, length);
+}
+
 /******************************************************************************
 function:	SPI Read
 parameter:

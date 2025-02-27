@@ -1,5 +1,5 @@
 {
-    "DEFAULT_IMAGE_PATH": "./pic/Rottweiler.bmp",
+    "DEFAULT_IMAGE_PATH": "./pic/default.bmp",
     "NO_IMAGE_AVAILABLE_PATH": "./pic/No_Image_Available.bmp",
     "MQTT_ADDRESS": "mqtt://192.168.1.15:1883",
     "MQTT_CLIENTID": "EpaperDisplayTM1",

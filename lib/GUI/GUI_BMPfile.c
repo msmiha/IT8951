@@ -197,7 +197,7 @@ static void Bitmap_format_Matrix(UBYTE *dst,UBYTE *src)
 static void DrawMatrix(UWORD Xpos, UWORD Ypos,UWORD Width, UWORD High,const UBYTE* Matrix)
 {
 	UWORD i,j,x,y;
-	UBYTE R,G,B;
+	UBYTE R = 0, G = 0, B = 0;
 	UBYTE temp1,temp2;
 	double Gray;
 	

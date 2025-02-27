@@ -9,6 +9,11 @@
 #include <cjson/cJSON.h>
 #include <time.h>
 #include "config.h"
+#include "image_cache.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 
 time_t last_image_display_time = 0;
 DisplayImageType current_image_type = IMAGE_DEFAULT;
@@ -30,58 +35,123 @@ static inline const char* getDefaultImageFilename() {
     return slash ? slash + 1 : globalConfig.defaultImagePath;
 }
 
-/* Generic function to load and display an image.
-   If imagePath is non-empty, it attempts to load it.
-   If that fails, it attempts to load the fallback image (NO_IMAGE_AVAILABLE_PATH).
-   Finally, the display is refreshed using the given memory address.
-*/
+// Generic function to load and display an image with caching.
+// If imagePath is non-empty, it attempts to load a pre-decoded image
+// from the cache. If not present (or size mismatch), it decodes the BMP
+// and then caches the result. Finally, the display is refreshed.
 static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info, UDOUBLE mem_addr) {
-    // If an image is already being loaded, skip this request.
+    struct timespec start, mid, end;
+    double elapsed_load_ms, elapsed_refresh_ms;
+
+    // Record start time (for image loading)
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     if (loading_image) {
         Debug("loadAndDisplayImage: Another image load is in progress. Skipping this request.\n");
         return;
     }
-    
-    // Mark that an image load is in progress.
     loading_image = 1;
 
     UWORD aligned_width;
-    UDOUBLE buffer_size;
-    computeAlignedWidthAndBufferSize(dev_info, &aligned_width, &buffer_size);
+    UDOUBLE expected_buffer_size;
+    computeAlignedWidthAndBufferSize(dev_info, &aligned_width, &expected_buffer_size);
 
-    UBYTE *buffer = (UBYTE *)malloc(buffer_size);
-    if (!buffer) {
-        Debug("loadAndDisplayImage: Memory allocation failed.\n");
-        loading_image = 0; // Release the flag before returning.
-        return;
-    }
-    
-    Paint_NewImage(buffer, aligned_width, dev_info.Panel_H, 0, BLACK);
-    Paint_SelectImage(buffer);
-    Paint_SetRotate(ROTATE_0);
-    Paint_SetMirroring(MIRROR_NONE);
-    Paint_SetBitsPerPixel(4);
-    Paint_Clear(WHITE);
-
+    // Build paths for the BMP and the cache file.
+    char bmpPath[256] = {0};
+    char cachePath[256] = {0};
     if (imagePath && strlen(imagePath) > 0) {
-        int ret = GUI_ReadBmp(imagePath, 0, 0);
-        if (ret != 0) {
-            Debug("loadAndDisplayImage: Failed to load image %s, error code %d. Attempting fallback.\n", imagePath, ret);
-            // Attempt to load the fallback image if the requested image isn’t the fallback.
-            if (strcmp(imagePath, globalConfig.noImageAvailablePath) != 0) {
-                ret = GUI_ReadBmp(globalConfig.noImageAvailablePath, 0, 0);
-                if (ret != 0) {
-                    Debug("loadAndDisplayImage: Fallback image %s also failed, error code %d.\n", globalConfig.noImageAvailablePath, ret);
+        // Extract the base filename from imagePath.
+        const char *base = strrchr(imagePath, '/');
+        if (base) {
+            base++;  // Skip the '/' character.
+        } else {
+            base = imagePath;
+        }
+        
+        // Construct the BMP file path in the new location.
+        // e.g., "./pic/bmp/0-refill.bmp"
+        snprintf(bmpPath, sizeof(bmpPath), "./pic/bmp/%s", base);
+
+        // Find the dot in the base filename to remove the extension.
+        const char *dot = strrchr(base, '.');
+        int nameLen = dot ? (dot - base) : strlen(base);
+
+        // Ensure the cache directory exists.
+        struct stat st = {0};
+        if (stat("./pic/raw", &st) == -1) {
+            if (mkdir("./pic/raw", 0777) != 0) {
+                Debug("loadAndDisplayImage: Failed to create directory ./pic/raw/.\n");
+            }
+        }
+        // Construct the cache file path.
+        // e.g., "./pic/raw/0-refill.raw"
+        snprintf(cachePath, sizeof(cachePath), "./pic/raw/%.*s.raw", nameLen, base);
+    }
+
+    UBYTE *buffer = NULL;
+    if (imagePath && strlen(imagePath) > 0) {
+        UDOUBLE cached_size = 0;
+        buffer = loadPreDecodedImage(cachePath, &cached_size);
+        if (buffer && (cached_size != expected_buffer_size)) {
+            Debug("loadAndDisplayImage: Cached image size (%u) does not match expected (%u). Re-decoding image.\n",
+                  cached_size, expected_buffer_size);
+            free(buffer);
+            buffer = NULL;
+        }
+    }
+
+    if (!buffer) {
+        buffer = (UBYTE *)malloc(expected_buffer_size);
+        if (!buffer) {
+            Debug("loadAndDisplayImage: Memory allocation failed.\n");
+            loading_image = 0;
+            return;
+        }
+        
+        Paint_NewImage(buffer, aligned_width, dev_info.Panel_H, 0, BLACK);
+        Paint_SelectImage(buffer);
+        Paint_SetRotate(ROTATE_0);
+        Paint_SetMirroring(MIRROR_NONE);
+        Paint_SetBitsPerPixel(4);
+        Paint_Clear(WHITE);
+
+        if (imagePath && strlen(imagePath) > 0) {
+            int ret = GUI_ReadBmp(bmpPath, 0, 0);
+            if (ret != 0) {
+                Debug("loadAndDisplayImage: Failed to load image %s, error code %d. Attempting fallback.\n", bmpPath, ret);
+                if (strcmp(bmpPath, globalConfig.noImageAvailablePath) != 0) {
+                    ret = GUI_ReadBmp(globalConfig.noImageAvailablePath, 0, 0);
+                    if (ret != 0) {
+                        Debug("loadAndDisplayImage: Fallback image %s also failed, error code %d.\n", globalConfig.noImageAvailablePath, ret);
+                    }
                 }
             }
         }
+        // Cache the decoded image for future use.
+        if (imagePath && strlen(imagePath) > 0) {
+            if (cachePreDecodedImage(cachePath, buffer, expected_buffer_size) != 0) {
+                Debug("loadAndDisplayImage: Failed to cache pre-decoded image to %s.\n", cachePath);
+            }
+        }
     }
-    
+
+    // Record mid time after image loading/decoding.
+    clock_gettime(CLOCK_MONOTONIC, &mid);
+    elapsed_load_ms = (mid.tv_sec - start.tv_sec) * 1000.0 +
+                      (mid.tv_nsec - start.tv_nsec) / 1000000.0;
+    printf("Elapsed time Image Loading: %f ms\n", elapsed_load_ms);
+
+    // Perform the display refresh.
     EPD_IT8951_4bp_Refresh(buffer, 0, 0, aligned_width, dev_info.Panel_H, false, mem_addr, true);
+
+    // Record end time after refresh.
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    elapsed_refresh_ms = (end.tv_sec - mid.tv_sec) * 1000.0 +
+                         (end.tv_nsec - mid.tv_nsec) / 1000000.0;
+    printf("Elapsed time Display Refresh: %f ms\n", elapsed_refresh_ms);
+
     free(buffer);
     last_image_display_time = time(NULL);
-    
-    // Mark that image loading has finished.
     loading_image = 0;
 }
 
