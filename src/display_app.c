@@ -62,14 +62,12 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
     if (imagePath && strlen(imagePath) > 0) {
         // Extract the base filename from imagePath.
         const char *base = strrchr(imagePath, '/');
-        if (base) {
+        if (base)
             base++;  // Skip the '/' character.
-        } else {
+        else
             base = imagePath;
-        }
         
-        // Construct the BMP file path in the new location.
-        // e.g., "./pic/bmp/0-refill.bmp"
+        // Construct the BMP file path in the new location (./pic/bmp/).
         snprintf(bmpPath, sizeof(bmpPath), "./pic/bmp/%s", base);
 
         // Find the dot in the base filename to remove the extension.
@@ -83,8 +81,7 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
                 Debug("loadAndDisplayImage: Failed to create directory ./pic/raw/.\n");
             }
         }
-        // Construct the cache file path.
-        // e.g., "./pic/raw/0-refill.raw"
+        // Construct the cache file path based on the requested image.
         snprintf(cachePath, sizeof(cachePath), "./pic/raw/%.*s.raw", nameLen, base);
     }
 
@@ -101,6 +98,7 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
     }
 
     if (!buffer) {
+        // Allocate buffer for decoding.
         buffer = (UBYTE *)malloc(expected_buffer_size);
         if (!buffer) {
             Debug("loadAndDisplayImage: Memory allocation failed.\n");
@@ -119,15 +117,56 @@ static void loadAndDisplayImage(const char *imagePath, IT8951_Dev_Info dev_info,
             int ret = GUI_ReadBmp(bmpPath, 0, 0);
             if (ret != 0) {
                 Debug("loadAndDisplayImage: Failed to load image %s, error code %d. Attempting fallback.\n", bmpPath, ret);
+                // Only attempt fallback if we're not already trying to load the fallback image.
                 if (strcmp(bmpPath, globalConfig.noImageAvailablePath) != 0) {
-                    ret = GUI_ReadBmp(globalConfig.noImageAvailablePath, 0, 0);
-                    if (ret != 0) {
-                        Debug("loadAndDisplayImage: Fallback image %s also failed, error code %d.\n", globalConfig.noImageAvailablePath, ret);
+                    // Build fallback paths.
+                    char fallbackBmpPath[256] = {0};
+                    char fallbackCachePath[256] = {0};
+                    int maxFilenameLen = sizeof(fallbackBmpPath) - strlen("./pic/bmp/") - 1;
+                    
+                    // Build fallback BMP path.
+                    if (strchr(globalConfig.noImageAvailablePath, '/') == NULL) {
+                        snprintf(fallbackBmpPath, sizeof(fallbackBmpPath), "./pic/bmp/%.*s", maxFilenameLen, globalConfig.noImageAvailablePath);
+                    } else {
+                        const char *fallbackBase = strrchr(globalConfig.noImageAvailablePath, '/');
+                        fallbackBase = fallbackBase ? fallbackBase + 1 : globalConfig.noImageAvailablePath;
+                        snprintf(fallbackBmpPath, sizeof(fallbackBmpPath), "./pic/bmp/%.*s", maxFilenameLen, fallbackBase);
+                    }
+                    // Build fallback cache path based on the fallback image's base name.
+                    const char *fallbackBase = strrchr(fallbackBmpPath, '/');
+                    fallbackBase = fallbackBase ? fallbackBase + 1 : fallbackBmpPath;
+                    const char *dot = strrchr(fallbackBase, '.');
+                    int fbNameLen = dot ? (dot - fallbackBase) : strlen(fallbackBase);
+                    snprintf(fallbackCachePath, sizeof(fallbackCachePath), "./pic/raw/%.*s.raw", fbNameLen, fallbackBase);
+                    
+                    // First, try to load the fallback image from its cache.
+                    UDOUBLE fallbackCachedSize = 0;
+                    UBYTE *fallbackBuffer = loadPreDecodedImage(fallbackCachePath, &fallbackCachedSize);
+                    if (fallbackBuffer && (fallbackCachedSize == expected_buffer_size)) {
+                        Debug("loadAndDisplayImage: Loaded fallback image from cache: %s\n", fallbackCachePath);
+                        free(buffer);
+                        buffer = fallbackBuffer;
+                        // Update cachePath to fallbackCachePath for consistency.
+                        strncpy(cachePath, fallbackCachePath, sizeof(cachePath));
+                    } else {
+                        // Either cache not available or size mismatch; decode the fallback image.
+                        ret = GUI_ReadBmp(fallbackBmpPath, 0, 0);
+                        if (ret != 0) {
+                            Debug("loadAndDisplayImage: Fallback image %s also failed, error code %d.\n", fallbackBmpPath, ret);
+                        } else {
+                            Debug("loadAndDisplayImage: Successfully loaded fallback image %s from file.\n", fallbackBmpPath);
+                            // Cache the fallback image.
+                            if (cachePreDecodedImage(fallbackCachePath, buffer, expected_buffer_size) != 0) {
+                                Debug("loadAndDisplayImage: Failed to cache fallback pre-decoded image to %s.\n", fallbackCachePath);
+                            }
+                            // Update cachePath for consistency.
+                            strncpy(cachePath, fallbackCachePath, sizeof(cachePath));
+                        }
                     }
                 }
             }
         }
-        // Cache the decoded image for future use.
+        // Cache the decoded image (whether primary or fallback).
         if (imagePath && strlen(imagePath) > 0) {
             if (cachePreDecodedImage(cachePath, buffer, expected_buffer_size) != 0) {
                 Debug("loadAndDisplayImage: Failed to cache pre-decoded image to %s.\n", cachePath);

@@ -42,6 +42,11 @@ int loadConfig(const char *filename, Config *config) {
         strncpy(config->defaultImagePath, item->valuestring, MAX_STR_LEN - 1);
     }
     
+    item = cJSON_GetObjectItemCaseSensitive(json, "DISCONNECTED_IMAGE_PATH");
+    if (cJSON_IsString(item) && (item->valuestring != NULL)) {
+        strncpy(config->disconnectedImagePath, item->valuestring, MAX_STR_LEN - 1);
+    }
+
     item = cJSON_GetObjectItemCaseSensitive(json, "NO_IMAGE_AVAILABLE_PATH");
     if (cJSON_IsString(item) && (item->valuestring != NULL)) {
         strncpy(config->noImageAvailablePath, item->valuestring, MAX_STR_LEN - 1);

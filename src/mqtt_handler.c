@@ -64,7 +64,7 @@ static int messageArrived(void *context, char *topicName, int topicLen, MQTTClie
 static void connectionLost(void *context, char *cause) {
     Debug("MQTT: Connection lost, cause: %s\n", cause);
     connected = 0;
-    Display_ShowSpecialImage("./pic/disconnected.bmp", global_dev_info, Init_Target_Memory_Addr);
+    Display_ShowSpecialImage(globalConfig.disconnectedImagePath, global_dev_info, Init_Target_Memory_Addr);
 }
 
 /**

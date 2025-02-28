@@ -1,6 +1,7 @@
 {
-    "DEFAULT_IMAGE_PATH": "./pic/default.bmp",
-    "NO_IMAGE_AVAILABLE_PATH": "./pic/No_Image_Available.bmp",
+    "DEFAULT_IMAGE_PATH": "./pic/bmp/default.bmp",
+    "DISCONNECTED_IMAGE_PATH": "./pic/bmp/disconnected.bmp",    
+    "NO_IMAGE_AVAILABLE_PATH": "./pic/bmp/No_Image_Available.bmp",
     "MQTT_ADDRESS": "mqtt://192.168.1.15:1883",
     "MQTT_CLIENTID": "EpaperDisplayTM1",
     "MQTT_TOPIC": "fontana/tm/1/epaper/image",

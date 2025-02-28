@@ -5,6 +5,7 @@
 
 typedef struct {
     char defaultImagePath[MAX_STR_LEN];
+    char disconnectedImagePath[MAX_STR_LEN];
     char noImageAvailablePath[MAX_STR_LEN];
     char mqttAddress[MAX_STR_LEN];
     char mqttClientID[MAX_STR_LEN];
